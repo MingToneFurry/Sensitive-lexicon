@@ -1,30 +1,71 @@
-name: 自动测试压缩
+name: build-release
 
 on:
   push:
     tags:
-      - '*'
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.22.x', '1.23.x']
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: 拉取代码
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: 设置 Tag 和文件名
-        id: release_info
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME="${{ github.event.inputs.tag_name }}"
-          else
-            TAG_NAME="${GITHUB_REF##*/}"
+          mkdir -p dist
+          BIN_NAME="sensitive-gateway"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BIN_NAME="${BIN_NAME}.exe"
           fi
-          FILE_NAME="Sensitive-lexicon-${TAG_NAME}.zip"
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "file_name=${FILE_NAME}" >> $GITHUB_OUTPUT
+          go build -trimpath -ldflags="-s -w" -o "dist/${BIN_NAME}" ./cmd/server
 
-      - name: 压缩项目
+      - name: Package
+        shell: bash
         run: |
-          zip -r ${{ steps.release_info.outputs.file_name }} . -x '*.git*'
+          cd dist
+          ARCHIVE="sensitive-lexicon-${{ runner.os }}-go${{ matrix.go }}"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            powershell -Command "Compress-Archive -Path * -DestinationPath ${ARCHIVE}.zip"
+          else
+            tar -czf "${ARCHIVE}.tar.gz" *
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensitive-lexicon-${{ runner.os }}-go${{ matrix.go }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**/*

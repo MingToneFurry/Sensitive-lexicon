@@ -1,0 +1,45 @@
+name: sync-upstream-and-build
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync vocabulary from upstream
+        run: |
+          set -e
+          git remote add upstream https://github.com/Konsheng/Sensitive-lexicon.git || true
+          git fetch upstream --tags
+          default_branch=$(git remote show upstream | sed -n '/HEAD branch/s/.*: //p')
+          git fetch upstream "${default_branch}"
+          mkdir -p /tmp/upstream-sync
+          git archive "upstream/${default_branch}" Vocabulary Organized ThirdPartyCompatibleFormats | tar -x -C /tmp/upstream-sync
+          rsync -a --delete /tmp/upstream-sync/Vocabulary/ Vocabulary/
+          rsync -a --delete /tmp/upstream-sync/Organized/ Organized/
+          rsync -a --delete /tmp/upstream-sync/ThirdPartyCompatibleFormats/ ThirdPartyCompatibleFormats/
+
+      - name: Commit sync changes
+        run: |
+          if git diff --quiet; then
+            echo "No upstream changes"
+            exit 0
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add Vocabulary Organized ThirdPartyCompatibleFormats
+          git commit -m "chore: daily sync upstream lexicon"
+          git tag "vauto-$(date +%Y%m%d)"
+          git push origin HEAD
+          git push origin --tags
