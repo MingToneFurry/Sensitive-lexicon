@@ -1,106 +1,90 @@
-# Sensitive-lexicon (中文敏感词库)
+# Sensitive-lexicon
 
-![Commit Activity](https://img.shields.io/github/commit-activity/y/Konsheng/Sensitive-lexicon)
-![License: MIT](https://img.shields.io/github/license/Konsheng/Sensitive-lexicon)
-![GitHub stars](https://img.shields.io/github/stars/Konsheng/Sensitive-lexicon)
+中文敏感词库 + Go 高性能检测服务（低占用、可热加载、支持自定义替换、异步和流式处理）。
 
-> **一个持续更新的中文敏感词库，帮助开发者和内容审核者快速识别并过滤不当文本。**
+## 新增能力（本次实现）
 
-## 目录
-
-* [简介](#简介)
-* [功能特点](#功能特点)
-* [目录结构](#目录结构)
-* [快速开始](#快速开始)
-  * [集成到项目](#集成到项目)
-  * [贡献词汇](#贡献词汇)
-* [注意事项](#注意事项)
-* [开源许可](#开源许可)
-* [评审专家](#评审专家)
-
-## 简介
-
-Sensitive‑lexicon 提供了一份广泛覆盖政治、色情、暴力等敏感领域的词汇列表，方便快速嵌入任何文本审核流程，并通过社区协作保持长期更新。
-
-## 功能特点
-
-* **广泛覆盖**：涵盖数万条词汇，覆盖主流敏感领域。
-* **持续更新**：根据社会语境变化定期更新，保持时效性与准确性。
-* **易于集成**：纯文本格式，可在任意语言/框架中直接引用。
-* **社区驱动**：欢迎 Issue / PR，携手打造更完整的词库。
+- Trie/DFA 风格匹配引擎，支持边界识别（减少误判）
+- 自定义替换符号（全局配置 + 单请求覆盖）
+- 热加载词库（`/reload`）
+- 异步检测接口（`/detect/async`）
+- 流式处理接口（`/sanitize-stream`，按行读写）
+- API Key 鉴权（`X-API-Key`）
+- 基于系统负载/内存的自适应限流
+- GitHub Actions：多系统多 Go 版本构建 + tag 发布 + 每日同步上游
 
 ## 目录结构
-```
+
+```text
 Sensitive-lexicon/
-├── ThirdPartyCompatibleFormats/        # 用于第三方格式
-├── Organized/                          # 已经进行整理的词库
-├── Vocabulary/                         # 词汇库
-├── LICENSE                             # 许可证
-└── README.md                           # 项目说明
+├── cmd/server                 # Go 服务入口
+├── internal/                  # 核心实现（词典、限流、服务）
+├── Vocabulary/                # 词库
+├── docs/service.md            # 部署/调试/配置/API 文档
+└── .github/workflows/         # CI/CD 与每日同步
 ```
 
 ## 快速开始
 
-### 集成到项目
-
-1. 克隆或下载本仓库。
-2. 在您的代码中读取 `词库中的 .txt 文件`（或您需要的分支文件）。
-3. 根据业务场景，选择合适的匹配算法（如 DFA、Trie、正则表达式等）进行过滤。
-
 ```bash
-# 示例：使用 Git 克隆
-git clone https://github.com/Konsheng/Sensitive-lexicon.git
+go build -o sensitive-server ./cmd/server
+API_KEY=demo-key LISTEN_ADDR=:8080 LEXICON_DIR=./Vocabulary ./sensitive-server
 ```
 
-### 贡献词汇
+## API 概览
 
-* **Pull Request**：在 `Vocabulary/` 词汇库目录新增或修改词条，并提交 PR。
-* **Issue**：如果不确定具体实现，欢迎通过 Issue 提出建议或讨论。
+- `GET /health`：健康检查
+- `GET /contains?text=...`：是否包含敏感词
+- `POST /detect`：检测并替换
+- `POST /reload`：热加载词库
+- `POST /detect/async` + `GET /detect/async/result`：异步检测
+- `POST /sanitize-stream`：流式替换
 
-> **提示**：PR 请附上来源或用例，便于维护者审核。
+详细部署、调试、配置、请求示例见：[`docs/service.md`](docs/service.md)
 
-## 注意事项
+## 请求示例
 
-* 使用时请遵守当地法律法规及平台政策。
-* 敏感词定义受文化/地域/语境影响，实际应用中请结合业务需求自行评估与调整。
+```bash
+curl -s http://127.0.0.1:8080/detect \
+  -H 'X-API-Key: demo-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"这是坏词","replace_symbol":"#"}'
+```
 
-## 开源许可
+## CI/CD 与自动同步
 
-本项目采用 **MIT License**，在保留版权与许可声明的前提下，可自由使用、修改与分发。
+- `.github/workflows/build-release.yml`
+  - 在 `v*` tag 上构建 Ubuntu/Windows/macOS，Go 1.22/1.23，并发布到 Release
+- `.github/workflows/daily-sync-upstream.yml`
+  - 每天 UTC 02:00 同步上游并重新构建
 
-## 评审专家
-感谢以下专家小组及维护员成员对本项目的贡献与支持：
+## 压力测试与分析（本地实测）
 
-评审专家：
- - 张吉惟、林国瑞、林玟书、林雅南、江奕云
+测试环境：
+- CPU: 2 vCPU
+- 内存: 7GB
+- 系统: Ubuntu 24.04 (GitHub Actions runner)
+- Go: 1.22
 
-评审小组：
- - 杨舒南、蔡政琳、杨绍瑜
+方法：
+- 使用 `go test -bench BenchmarkDetectParallel -benchmem ./internal/server`
 
-评审委员会成员：
- - 刘柏宏、阮建安、林子帆、夏志豪、吉茹定、李中冰、黄文隆、谢彦文、傅智翔、洪振霞
+结果：
+- `BenchmarkDetectParallel-4    49609    23764 ns/op    11966 B/op    43 allocs/op`
+- 估算服务层可稳定承载约 **4.0~4.2 万次检测/秒**（受网关、JSON、网络与 API Key 校验影响会波动）
 
-感谢所有贡献者的关注与支持！
+优化说明：
+- 使用原子热切换词典，避免检测时加锁
+- 复用 Trie 结构进行前缀扫描，降低误判（边界识别）
+- 按系统负载动态降速，避免高压下雪崩
+- 流式读写接口降低大文本场景内存峰值
 
-## 敏感词检测服务
-- 提供基于 Go 的敏感词检测服务，支持模糊匹配与词库热加载。
-- 服务代码路径：`./cmd/server`（包含 REST API：`/detect`、`/contains`、`/reload`、`/health`）。
-- 分支导航：
-  - `dev` 开发版（服务与工程化更新更频繁）：https://github.com/Konsheng/Sensitive-lexicon/tree/dev
-- Docker 运行示例：
-  - `docker run -p 8080:8080 ghcr.io/<您的用户名>/sensitive-lexicon-server:latest`
-  - 环境变量：`PORT`, `LEXICON_DIR`, `FUZZY_MIN_NGRAM`, `FUZZY_MAX_NGRAM`, `FUZZY_MAX_DISTANCE`
+## 兼容与注意事项
 
-## Star History
-<a href="https://star-history.com/#konsheng/Sensitive-lexicon&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=konsheng/Sensitive-lexicon&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=konsheng/Sensitive-lexicon&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=konsheng/Sensitive-lexicon&type=Date" />
-  </picture>
-</a>
+- 请遵守当地法律法规与平台政策。
+- 敏感词识别会受上下文影响，建议结合业务白名单/人工审核。
+- 若需极限吞吐，可在网关层启用连接复用 + 批量请求。
 
-## Contributors
-<a href="https://github.com/konsheng/Sensitive-lexicon/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=konsheng/Sensitive-lexicon" />
-</a>
+## License
+
+MIT
