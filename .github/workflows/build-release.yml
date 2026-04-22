@@ -2,8 +2,8 @@ name: build-release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -13,43 +13,49 @@ jobs:
   build:
     strategy:
       matrix:
-        go-version: ['1.22.x', '1.23.x']
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: '1.23.x'
+
       - name: Test
         run: go test ./...
+
       - name: Build
-        # Use bash on all platforms so the EXT variable works on Windows too.
         shell: bash
         run: |
           mkdir -p dist
           EXT=""
           if [ "${{ runner.os }}" = "Windows" ]; then EXT=".exe"; fi
           go build -trimpath -ldflags "-s -w" \
-            -o "dist/sensitive-server-${{ runner.os }}-${{ matrix.go-version }}${EXT}" \
+            -o "dist/sensitive-server-${{ runner.os }}${EXT}" \
             ./cmd/server
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sensitive-server-${{ runner.os }}-${{ matrix.go-version }}
+          name: sensitive-server-${{ runner.os }}
           path: dist/*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Publish Release assets
+
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: main-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: main build #${{ github.run_number }}
           generate_release_notes: true
           files: artifacts/**
