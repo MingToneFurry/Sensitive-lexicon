@@ -24,9 +24,15 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Build
+        # Use bash on all platforms so the EXT variable works on Windows too.
+        shell: bash
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w" -o dist/sensitive-server-${{ runner.os }}-${{ matrix.go-version }} ./cmd/server
+          EXT=""
+          if [ "${{ runner.os }}" = "Windows" ]; then EXT=".exe"; fi
+          go build -trimpath -ldflags "-s -w" \
+            -o "dist/sensitive-server-${{ runner.os }}-${{ matrix.go-version }}${EXT}" \
+            ./cmd/server
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -44,4 +50,6 @@ jobs:
       - name: Publish Release assets
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: true
           files: artifacts/**

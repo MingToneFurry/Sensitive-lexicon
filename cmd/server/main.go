@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 
 	"github.com/MingToneFurry/Sensitive-lexicon/internal/config"
@@ -8,7 +9,10 @@ import (
 )
 
 func main() {
-	cfg := config.LoadFromEnv()
+	configFile := flag.String("config", "config.json", "path to JSON config file (default: config.json; file is optional — falls back to env vars)")
+	flag.Parse()
+
+	cfg := config.Load(*configFile)
 	srv, err := server.New(cfg)
 	if err != nil {
 		log.Fatalf("create server: %v", err)

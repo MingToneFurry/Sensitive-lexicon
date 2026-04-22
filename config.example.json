@@ -1,0 +1,23 @@
+{
+  "_comment": "Copy this file to config.json and edit as needed. Environment variables override file values.",
+  "listen_addr": ":8080",
+  "lexicon_dir": "./Vocabulary",
+  "replace_symbol": "*",
+  "enable_boundary": true,
+  "api_key": "",
+  "base_rps": 600,
+  "max_body_bytes": 1048576,
+  "async_queue_length": 128,
+  "block_score_threshold": 0.2,
+  "ocr": {
+    "enable": false,
+    "use_gpu": false,
+    "gpu_device": "0",
+    "auto_download": true,
+    "repo_url": "https://github.com/DayBreak-u/chineseocr_lite.git",
+    "model_dir": "./ThirdPartyCompatibleFormats/chineseocr_lite",
+    "python_bin": "python3",
+    "bridge_script": "./internal/ocr/bridge.py",
+    "timeout_sec": 30
+  }
+}

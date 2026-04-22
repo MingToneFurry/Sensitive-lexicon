@@ -67,3 +67,6 @@ Thumbs.db
 *.key
 *.crt
 *.cert
+
+# Local config file (may contain secrets)
+config.json
