@@ -153,7 +153,7 @@ ENABLE_OCR=true OCR_USE_GPU=false ./sensitive-server -config config.json
 字段说明：
 - `score` = 匹配字符数 / 总字符数（四舍五入到 4 位小数）
 - `blocked` = `contains && score >= threshold`
-- `category_scores` = 按词库分类返回分数（可返回多个分类，分数=该分类匹配字符数/总字符数）
+- `category_scores` = 按词库分类返回分数（可返回多个分类，分数=该分类匹配字符数/总字符数，且同样四舍五入到 4 位小数）
 
 ### `POST /detect/image`
 
