@@ -33,7 +33,12 @@ def main() -> int:
         from PIL import Image
 
         img_bytes = base64.b64decode(image_b64)
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        try:
+            # PIL.UnidentifiedImageError (Pillow >=7.2) is a subclass of OSError
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        except (ValueError, OSError) as exc:
+            print(json.dumps({"error": str(exc), "client_error": True}, ensure_ascii=False))
+            return 0
         result = model.text_predict(np.array(img))
         text = " ".join([item.get("text", "") for item in result if item.get("text")])
         print(json.dumps({"text": text}, ensure_ascii=False))

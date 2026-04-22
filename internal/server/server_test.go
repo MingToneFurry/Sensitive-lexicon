@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,13 +14,15 @@ import (
 	"testing"
 
 	"github.com/MingToneFurry/Sensitive-lexicon/internal/config"
+	"github.com/MingToneFurry/Sensitive-lexicon/internal/ocr"
 )
 
 type stubOCR struct {
 	text string
+	err  error
 }
 
-func (s stubOCR) Recognize(_ context.Context, _ []byte) (string, error) { return s.text, nil }
+func (s stubOCR) Recognize(_ context.Context, _ []byte) (string, error) { return s.text, s.err }
 func (s stubOCR) Enabled() bool                                         { return true }
 
 func testConfig(dir, apiKey string) config.Config {
@@ -126,5 +129,39 @@ func TestDetectImageWithStubOCR(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), `"contains":true`) {
 		t.Fatalf("unexpected body: %s", res.Body.String())
+	}
+}
+
+func TestDetectImageInvalidInputReturns400(t *testing.T) {
+	s := newTestServer(t, "")
+	s.ocr = stubOCR{err: &ocr.InvalidInputError{Msg: "cannot identify image file"}}
+	h := s.middleware(http.HandlerFunc(s.detectImage))
+
+	imgB64 := base64.StdEncoding.EncodeToString([]byte("not-an-image"))
+	reqBody := map[string]any{"image_base64": imgB64}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/detect/image", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestDetectImageServerErrorReturns500(t *testing.T) {
+	s := newTestServer(t, "")
+	s.ocr = stubOCR{err: fmt.Errorf("ocr subprocess crashed")}
+	h := s.middleware(http.HandlerFunc(s.detectImage))
+
+	imgB64 := base64.StdEncoding.EncodeToString([]byte("some-image"))
+	reqBody := map[string]any{"image_base64": imgB64}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/detect/image", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", res.Code, res.Body.String())
 	}
 }

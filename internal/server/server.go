@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -167,6 +168,11 @@ func (s *Server) detectImage(w http.ResponseWriter, r *http.Request) {
 
 	text, err := s.ocr.Recognize(r.Context(), imgBytes)
 	if err != nil {
+		var clientErr *ocr.InvalidInputError
+		if errors.As(err, &clientErr) {
+			http.Error(w, fmt.Sprintf("invalid image: %v", err), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("ocr failed: %v", err), http.StatusInternalServerError)
 		return
 	}

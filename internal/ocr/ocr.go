@@ -45,9 +45,15 @@ type pythonClient struct {
 
 func (p *pythonClient) Enabled() bool { return true }
 
+// InvalidInputError is returned by Recognize when the failure is caused by
+// invalid caller-supplied image data rather than an internal server fault.
+type InvalidInputError struct{ Msg string }
+
+func (e *InvalidInputError) Error() string { return e.Msg }
+
 func (p *pythonClient) Recognize(ctx context.Context, imageBytes []byte) (string, error) {
 	if len(imageBytes) == 0 {
-		return "", fmt.Errorf("empty image")
+		return "", &InvalidInputError{"empty image"}
 	}
 	timeout := p.settings.TimeoutSec
 	if timeout <= 0 {
@@ -77,9 +83,13 @@ func (p *pythonClient) Recognize(ctx context.Context, imageBytes []byte) (string
 	if err != nil {
 		if out != "" {
 			var failed struct {
-				Error string `json:"error"`
+				Error       string `json:"error"`
+				ClientError bool   `json:"client_error"`
 			}
 			if jsonErr := json.Unmarshal([]byte(out), &failed); jsonErr == nil && failed.Error != "" {
+				if failed.ClientError {
+					return "", &InvalidInputError{failed.Error}
+				}
 				return "", fmt.Errorf("ocr recognize: %s", failed.Error)
 			}
 		}
@@ -87,13 +97,17 @@ func (p *pythonClient) Recognize(ctx context.Context, imageBytes []byte) (string
 	}
 
 	var resp struct {
-		Text  string `json:"text"`
-		Error string `json:"error,omitempty"`
+		Text        string `json:"text"`
+		Error       string `json:"error,omitempty"`
+		ClientError bool   `json:"client_error,omitempty"`
 	}
 	if jsonErr := json.Unmarshal([]byte(out), &resp); jsonErr != nil {
 		return "", fmt.Errorf("parse ocr response: %w", jsonErr)
 	}
 	if resp.Error != "" {
+		if resp.ClientError {
+			return "", &InvalidInputError{resp.Error}
+		}
 		return "", fmt.Errorf("ocr recognize: %s", resp.Error)
 	}
 	return resp.Text, nil
@@ -141,23 +155,24 @@ func New(settings Settings) (Client, error) {
 func ensureRepo(settings Settings) error {
 	if _, err := os.Stat(settings.ModelRepoDir); err == nil {
 		gitDir := filepath.Join(settings.ModelRepoDir, ".git")
-		if _, gitErr := os.Stat(gitDir); gitErr == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), settings.DownloadTimeout)
-			defer cancel()
-			urlCmd := exec.CommandContext(ctx, "git", "-C", settings.ModelRepoDir, "remote", "get-url", "origin")
-			out, urlErr := urlCmd.CombinedOutput()
-			if urlErr != nil {
-				return fmt.Errorf("read ocr repo remote: %w (%s)", urlErr, strings.TrimSpace(string(out)))
-			}
-			remote := strings.TrimSpace(string(out))
-			if !sameRepo(remote, settings.RepoURL) {
-				return fmt.Errorf("ocr repo remote mismatch: got %s", remote)
-			}
+		if _, gitErr := os.Stat(gitDir); gitErr != nil {
+			return fmt.Errorf("ocr model dir %q exists but is not a git repository; remove it and retry", settings.ModelRepoDir)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), settings.DownloadTimeout)
+		defer cancel()
+		urlCmd := exec.CommandContext(ctx, "git", "-C", settings.ModelRepoDir, "remote", "get-url", "origin")
+		out, urlErr := urlCmd.CombinedOutput()
+		if urlErr != nil {
+			return fmt.Errorf("read ocr repo remote: %w (%s)", urlErr, strings.TrimSpace(string(out)))
+		}
+		remote := strings.TrimSpace(string(out))
+		if !sameRepo(remote, settings.RepoURL) {
+			return fmt.Errorf("ocr repo remote mismatch: got %s", remote)
+		}
 
-			cmd := exec.CommandContext(ctx, "git", "-C", settings.ModelRepoDir, "pull", "--ff-only")
-			if out, runErr := cmd.CombinedOutput(); runErr != nil {
-				return fmt.Errorf("update ocr repo: %w (%s)", runErr, strings.TrimSpace(string(out)))
-			}
+		cmd := exec.CommandContext(ctx, "git", "-C", settings.ModelRepoDir, "pull", "--ff-only")
+		if out, runErr := cmd.CombinedOutput(); runErr != nil {
+			return fmt.Errorf("update ocr repo: %w (%s)", runErr, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
