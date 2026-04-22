@@ -5,6 +5,7 @@ dist/
 out/
 
 # Executables and shared libs
+sensitive-server
 *.exe
 *.exe~
 *.dll

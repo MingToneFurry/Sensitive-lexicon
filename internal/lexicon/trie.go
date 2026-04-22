@@ -164,8 +164,11 @@ func (e *Engine) Replace(text string) string {
 }
 
 func (e *Engine) ReplaceWithSymbol(text, symbol string) string {
+	return e.ReplaceWithMatches(text, symbol, e.Find(text))
+}
+
+func (e *Engine) ReplaceWithMatches(text, symbol string, matches []Match) string {
 	runes := []rune(text)
-	matches := e.Find(text)
 	repVal := symbol
 	if repVal == "" {
 		rep := e.replace.Load()
