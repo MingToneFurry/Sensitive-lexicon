@@ -65,11 +65,11 @@ func (e *Engine) LoadDir(dir string) (int, error) {
 		if err != nil {
 			return err
 		}
-		categoryName := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
-		ct := categoryTrie[categoryName]
+		lexiconName := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+		ct := categoryTrie[lexiconName]
 		if ct == nil {
 			ct = &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
-			categoryTrie[categoryName] = ct
+			categoryTrie[lexiconName] = ct
 		}
 		n, err := loadWords(f, newTrie, ct)
 		closeErr := f.Close()
@@ -161,7 +161,7 @@ func (e *Engine) CategoryScores(text string) map[string]float64 {
 		return map[string]float64{}
 	}
 	scores := make(map[string]float64)
-	for name, trie := range *categoryTrie {
+	for categoryName, trie := range *categoryTrie {
 		matches := findWithTrie(runes, trie, e.enBoundary.Load())
 		matchedRunes := 0
 		for _, m := range matches {
@@ -172,7 +172,7 @@ func (e *Engine) CategoryScores(text string) map[string]float64 {
 		if matchedRunes == 0 {
 			continue
 		}
-		scores[name] = float64(matchedRunes) / float64(totalRunes)
+		scores[categoryName] = float64(matchedRunes) / float64(totalRunes)
 	}
 	return scores
 }
