@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode"
+	"unicode/utf8"
 )
 
 type TrieNode struct {
@@ -152,7 +153,7 @@ func findWithTrie(runes []rune, trie *Trie, enableBoundary bool) []Match {
 
 func (e *Engine) CategoryScores(text string) map[string]float64 {
 	runes := []rune(strings.ToLower(text))
-	totalRunes := len(runes)
+	totalRunes := utf8.RuneCountInString(text)
 	if totalRunes == 0 {
 		return map[string]float64{}
 	}
