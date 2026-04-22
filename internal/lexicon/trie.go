@@ -26,6 +26,7 @@ type Match struct {
 
 type Engine struct {
 	trie       atomic.Pointer[Trie]
+	category   atomic.Pointer[map[string]*Trie]
 	replace    atomic.Pointer[string]
 	enBoundary atomic.Bool
 }
@@ -36,6 +37,8 @@ func NewEngine(replace string, enableBoundary bool) *Engine {
 	e.enBoundary.Store(enableBoundary)
 	t := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
 	e.trie.Store(t)
+	c := map[string]*Trie{}
+	e.category.Store(&c)
 	return e
 }
 
@@ -49,6 +52,7 @@ func (e *Engine) SetBoundary(v bool) {
 
 func (e *Engine) LoadDir(dir string) (int, error) {
 	newTrie := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	categoryTrie := map[string]*Trie{}
 	count := 0
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -61,7 +65,13 @@ func (e *Engine) LoadDir(dir string) (int, error) {
 		if err != nil {
 			return err
 		}
-		n, err := loadWords(f, newTrie)
+		categoryName := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+		ct := categoryTrie[categoryName]
+		if ct == nil {
+			ct = &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+			categoryTrie[categoryName] = ct
+		}
+		n, err := loadWords(f, newTrie, ct)
 		closeErr := f.Close()
 		count += n
 		if err != nil {
@@ -76,10 +86,11 @@ func (e *Engine) LoadDir(dir string) (int, error) {
 		return 0, err
 	}
 	e.trie.Store(newTrie)
+	e.category.Store(&categoryTrie)
 	return count, nil
 }
 
-func loadWords(r io.Reader, trie *Trie) (int, error) {
+func loadWords(r io.Reader, tries ...*Trie) (int, error) {
 	s := bufio.NewScanner(r)
 	c := 0
 	for s.Scan() {
@@ -87,7 +98,12 @@ func loadWords(r io.Reader, trie *Trie) (int, error) {
 		if w == "" || strings.HasPrefix(w, "#") {
 			continue
 		}
-		trie.Insert([]rune(w))
+		word := []rune(w)
+		for _, trie := range tries {
+			if trie != nil {
+				trie.Insert(word)
+			}
+		}
 		c++
 	}
 	return c, s.Err()
@@ -107,6 +123,13 @@ func (t *Trie) Insert(word []rune) {
 func (e *Engine) Find(text string) []Match {
 	runes := []rune(strings.ToLower(text))
 	trie := e.trie.Load()
+	return findWithTrie(runes, trie, e.enBoundary.Load())
+}
+
+func findWithTrie(runes []rune, trie *Trie, enableBoundary bool) []Match {
+	if trie == nil || trie.Root == nil {
+		return nil
+	}
 	res := make([]Match, 0, 8)
 	for i := 0; i < len(runes); i++ {
 		n := trie.Root
@@ -117,7 +140,7 @@ func (e *Engine) Find(text string) []Match {
 			}
 			n = next
 			if n.End {
-				if e.enBoundary.Load() && !isBoundary(runes, i, j) {
+				if enableBoundary && !isBoundary(runes, i, j) {
 					continue
 				}
 				res = append(res, Match{Start: i, End: j + 1})
@@ -125,6 +148,33 @@ func (e *Engine) Find(text string) []Match {
 		}
 	}
 	return mergeMatches(res)
+}
+
+func (e *Engine) CategoryScores(text string) map[string]float64 {
+	runes := []rune(strings.ToLower(text))
+	totalRunes := len(runes)
+	if totalRunes == 0 {
+		return map[string]float64{}
+	}
+	categoryTrie := e.category.Load()
+	if categoryTrie == nil {
+		return map[string]float64{}
+	}
+	scores := make(map[string]float64)
+	for name, trie := range *categoryTrie {
+		matches := findWithTrie(runes, trie, e.enBoundary.Load())
+		matchedRunes := 0
+		for _, m := range matches {
+			if m.End > m.Start {
+				matchedRunes += (m.End - m.Start)
+			}
+		}
+		if matchedRunes == 0 {
+			continue
+		}
+		scores[name] = float64(matchedRunes) / float64(totalRunes)
+	}
+	return scores
 }
 
 func mergeMatches(matches []Match) []Match {

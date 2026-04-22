@@ -30,3 +30,32 @@ func TestBoundaryReduceFalsePositive(t *testing.T) {
 		t.Fatalf("should match at boundary")
 	}
 }
+
+func TestCategoryScores(t *testing.T) {
+	e := NewEngine("*", false)
+	all := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	all.Insert([]rune("坏词"))
+	all.Insert([]rune("色词"))
+	e.trie.Store(all)
+
+	political := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	political.Insert([]rune("坏词"))
+	adult := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	adult.Insert([]rune("色词"))
+	categories := map[string]*Trie{
+		"政治类型": political,
+		"色情类型": adult,
+	}
+	e.category.Store(&categories)
+
+	scores := e.CategoryScores("这是坏词和色词")
+	if len(scores) != 2 {
+		t.Fatalf("expected 2 category scores, got %d", len(scores))
+	}
+	if scores["政治类型"] <= 0 {
+		t.Fatalf("expected political score > 0, got %v", scores["政治类型"])
+	}
+	if scores["色情类型"] <= 0 {
+		t.Fatalf("expected adult score > 0, got %v", scores["色情类型"])
+	}
+}

@@ -79,6 +79,15 @@ func TestDetectWithValidAPIKey(t *testing.T) {
 	if !strings.Contains(res.Body.String(), `"blocked":true`) {
 		t.Fatalf("expected blocked true: %s", res.Body.String())
 	}
+	var payload struct {
+		CategoryScores map[string]float64 `json:"category_scores"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.CategoryScores["a"] <= 0 {
+		t.Fatalf("expected category score for a > 0, got %v", payload.CategoryScores)
+	}
 }
 
 func TestDetectThresholdOverride(t *testing.T) {

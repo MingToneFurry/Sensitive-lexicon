@@ -6,7 +6,7 @@
 
 - Trie/DFA 风格匹配引擎，支持边界识别（减少误判）
 - 自定义替换符号（全局配置 + 单请求覆盖）
-- 句子拦截权重：返回 `score`、`threshold`、`blocked`
+- 句子拦截权重：返回 `score`、`threshold`、`blocked`，并返回多分类分数 `category_scores`
 - **本地 JSON 配置文件**（`config.json`），env var 仍可作为覆盖层
 - 热加载词库（`/reload`）
 - 异步检测接口（`/detect/async`）
