@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MingToneFurry/Sensitive-lexicon/internal/config"
 	"github.com/MingToneFurry/Sensitive-lexicon/internal/ocr"
@@ -79,6 +80,15 @@ func TestDetectWithValidAPIKey(t *testing.T) {
 	if !strings.Contains(res.Body.String(), `"blocked":true`) {
 		t.Fatalf("expected blocked true: %s", res.Body.String())
 	}
+	var payload struct {
+		CategoryScores map[string]float64 `json:"category_scores"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.CategoryScores["a"] <= 0 {
+		t.Fatalf("expected category score for a > 0, got %v", payload.CategoryScores)
+	}
 }
 
 func TestDetectThresholdOverride(t *testing.T) {
@@ -130,6 +140,15 @@ func TestDetectImageWithStubOCR(t *testing.T) {
 	if !strings.Contains(res.Body.String(), `"contains":true`) {
 		t.Fatalf("unexpected body: %s", res.Body.String())
 	}
+	var payload struct {
+		CategoryScores map[string]float64 `json:"category_scores"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload.CategoryScores["a"] <= 0 {
+		t.Fatalf("expected category score for a > 0, got %v", payload.CategoryScores)
+	}
 }
 
 func TestDetectImageInvalidInputReturns400(t *testing.T) {
@@ -164,4 +183,50 @@ func TestDetectImageServerErrorReturns500(t *testing.T) {
 	if res.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d body=%s", res.Code, res.Body.String())
 	}
+}
+
+func TestDetectAsyncResultIncludesCategoryScores(t *testing.T) {
+	s := newTestServer(t, "")
+	detectAsyncHandler := s.middleware(http.HandlerFunc(s.detectAsync))
+	resultHandler := s.middleware(http.HandlerFunc(s.detectAsyncResult))
+
+	req := httptest.NewRequest(http.MethodPost, "/detect/async", bytes.NewBufferString(`{"text":"这是坏词"}`))
+	res := httptest.NewRecorder()
+	detectAsyncHandler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var enqueueResp struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &enqueueResp); err != nil {
+		t.Fatalf("unmarshal async enqueue response: %v", err)
+	}
+	if enqueueResp.JobID == "" {
+		t.Fatal("expected non-empty job_id")
+	}
+
+	var resultResp struct {
+		CategoryScores map[string]float64 `json:"category_scores"`
+	}
+	for i := 0; i < 50; i++ {
+		resultReq := httptest.NewRequest(http.MethodGet, "/detect/async/result?job_id="+enqueueResp.JobID, nil)
+		resultRes := httptest.NewRecorder()
+		resultHandler.ServeHTTP(resultRes, resultReq)
+		if resultRes.Code == http.StatusOK {
+			if err := json.Unmarshal(resultRes.Body.Bytes(), &resultResp); err != nil {
+				t.Fatalf("unmarshal async result response: %v", err)
+			}
+			if resultResp.CategoryScores["a"] <= 0 {
+				t.Fatalf("expected category score for a > 0, got %v", resultResp.CategoryScores)
+			}
+			return
+		}
+		if resultRes.Code != http.StatusAccepted {
+			t.Fatalf("expected 200 or 202, got %d body=%s", resultRes.Code, resultRes.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for async result")
 }

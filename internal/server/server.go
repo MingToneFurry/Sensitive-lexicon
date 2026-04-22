@@ -55,12 +55,13 @@ type detectImageRequest struct {
 }
 
 type detectResponse struct {
-	Contains  bool    `json:"contains"`
-	Replaced  string  `json:"replaced"`
-	Count     int     `json:"count"`
-	Score     float64 `json:"score"`
-	Blocked   bool    `json:"blocked"`
-	Threshold float64 `json:"threshold"`
+	Contains       bool               `json:"contains"`
+	Replaced       string             `json:"replaced"`
+	Count          int                `json:"count"`
+	Score          float64            `json:"score"`
+	Blocked        bool               `json:"blocked"`
+	Threshold      float64            `json:"threshold"`
+	CategoryScores map[string]float64 `json:"category_scores,omitempty"`
 }
 
 type detectImageResponse struct {
@@ -272,15 +273,20 @@ func (s *Server) analyzeText(text, replaceSymbol string, reqThreshold *float64) 
 	threshold = clampThreshold(threshold)
 	score = math.Round(score*scoreRoundScale) / scoreRoundScale
 	threshold = math.Round(threshold*scoreRoundScale) / scoreRoundScale
+	categoryScores := s.engine.CategoryScores(text)
+	for k, v := range categoryScores {
+		categoryScores[k] = math.Round(v*scoreRoundScale) / scoreRoundScale
+	}
 	contains := len(matches) > 0
 	blocked := contains && score >= threshold
 	return detectResponse{
-		Contains:  contains,
-		Replaced:  s.engine.ReplaceWithMatches(text, replaceSymbol, matches),
-		Count:     len(matches),
-		Score:     score,
-		Blocked:   blocked,
-		Threshold: threshold,
+		Contains:       contains,
+		Replaced:       s.engine.ReplaceWithMatches(text, replaceSymbol, matches),
+		Count:          len(matches),
+		Score:          score,
+		Blocked:        blocked,
+		Threshold:      threshold,
+		CategoryScores: categoryScores,
 	}
 }
 

@@ -143,13 +143,17 @@ ENABLE_OCR=true OCR_USE_GPU=false ./sensitive-server -config config.json
   "count": 1,
   "score": 0.5,
   "blocked": true,
-  "threshold": 0.15
+  "threshold": 0.15,
+  "category_scores": {
+    "政治类型": 0.5
+  }
 }
 ```
 
 字段说明：
 - `score` = 匹配字符数 / 总字符数（四舍五入到 4 位小数）
 - `blocked` = `contains && score >= threshold`
+- `category_scores` = 按词库分类返回分数（可返回多个分类，分数=该分类匹配字符数/总字符数，且同样四舍五入到 4 位小数）
 
 ### `POST /detect/image`
 
@@ -194,6 +198,9 @@ curl -s http://127.0.0.1:8080/detect/image \
   "score": 0.33,
   "blocked": true,
   "threshold": 0.2,
+  "category_scores": {
+    "色情类型": 0.33
+  },
   "ocr_text": "识别出的原始文本"
 }
 ```
