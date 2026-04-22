@@ -1,0 +1,34 @@
+name: weekly-sync-ocr-models
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-ocr-model-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare target directory
+        run: mkdir -p ThirdPartyCompatibleFormats/chineseocr_lite
+      - name: Sync OCR model repository snapshot
+        env:
+          OCR_ARCHIVE_URL: https://codeload.github.com/DayBreak-u/chineseocr_lite/tar.gz/refs/heads/master
+        run: |
+          rm -rf /tmp/chineseocr_lite_sync
+          mkdir -p /tmp/chineseocr_lite_sync
+          curl -L "$OCR_ARCHIVE_URL" -o /tmp/chineseocr_lite_sync/chineseocr_lite.tar.gz
+          tar -xzf /tmp/chineseocr_lite_sync/chineseocr_lite.tar.gz -C /tmp/chineseocr_lite_sync
+          rm -rf ThirdPartyCompatibleFormats/chineseocr_lite/*
+          cp -a /tmp/chineseocr_lite_sync/chineseocr_lite-master/. ThirdPartyCompatibleFormats/chineseocr_lite/
+      - name: Commit updates
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ThirdPartyCompatibleFormats/chineseocr_lite
+          git diff --cached --quiet || git commit -m "chore: weekly sync chineseocr_lite models"
+          git push
