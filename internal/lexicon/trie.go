@@ -65,11 +65,11 @@ func (e *Engine) LoadDir(dir string) (int, error) {
 		if err != nil {
 			return err
 		}
-		lexiconName := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
-		ct := categoryTrie[lexiconName]
+		categoryName := strings.TrimSuffix(d.Name(), filepath.Ext(d.Name()))
+		ct := categoryTrie[categoryName]
 		if ct == nil {
 			ct = &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
-			categoryTrie[lexiconName] = ct
+			categoryTrie[categoryName] = ct
 		}
 		n, err := loadWords(f, newTrie, ct)
 		closeErr := f.Close()
@@ -90,6 +90,8 @@ func (e *Engine) LoadDir(dir string) (int, error) {
 	return count, nil
 }
 
+// loadWords inserts each normalized word into all provided tries.
+// It is used to update the global trie and the per-category trie in one pass.
 func loadWords(r io.Reader, tries ...*Trie) (int, error) {
 	s := bufio.NewScanner(r)
 	c := 0
@@ -100,9 +102,7 @@ func loadWords(r io.Reader, tries ...*Trie) (int, error) {
 		}
 		word := []rune(w)
 		for _, trie := range tries {
-			if trie != nil {
-				trie.Insert(word)
-			}
+			trie.Insert(word)
 		}
 		c++
 	}
