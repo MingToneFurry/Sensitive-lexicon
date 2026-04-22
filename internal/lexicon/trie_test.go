@@ -1,6 +1,9 @@
 package lexicon
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestReplaceAndContains(t *testing.T) {
 	e := NewEngine("*", false)
@@ -57,5 +60,23 @@ func TestCategoryScores(t *testing.T) {
 	}
 	if scores["色情类型"] <= 0 {
 		t.Fatalf("expected adult score > 0, got %v", scores["色情类型"])
+	}
+}
+
+func TestCategoryScoresUsesOriginalRuneCountDenominator(t *testing.T) {
+	e := NewEngine("*", false)
+	all := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	all.Insert([]rune("坏词"))
+	e.trie.Store(all)
+
+	category := &Trie{Root: &TrieNode{Children: map[rune]*TrieNode{}}}
+	category.Insert([]rune("坏词"))
+	categories := map[string]*Trie{"a": category}
+	e.category.Store(&categories)
+
+	scores := e.CategoryScores("İ坏词")
+	want := 2.0 / 3.0
+	if diff := math.Abs(scores["a"] - want); diff > 1e-9 {
+		t.Fatalf("expected score %.12f, got %.12f", want, scores["a"])
 	}
 }
