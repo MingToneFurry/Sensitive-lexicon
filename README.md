@@ -142,7 +142,7 @@ curl -s http://127.0.0.1:8080/detect/image \
 
 | Workflow | 触发 | 说明 |
 |---|---|---|
-| `build-release.yml` | `v*` tag / 手动 | 多平台（Linux/Windows/macOS）多 Go 版本构建，自动发布 Release |
+| `build-release.yml` | `v*` tag / 手动 | 多平台（Linux/Windows/macOS）构建并发布两个压缩包：基础版（不含 OCR 模型）与 OCR 版（含模型与一键安装 Python 依赖脚本） |
 | `daily-sync-upstream.yml` | 每天 UTC 02:00 | 同步上游词库并重新构建 |
 | `weekly-sync-ocr-models.yml` | 每周一 UTC 02:00 | 同步 `chineseocr_lite` 代码快照 |
 

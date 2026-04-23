@@ -33,14 +33,90 @@ jobs:
           EXT=""
           if [ "${{ runner.os }}" = "Windows" ]; then EXT=".exe"; fi
           go build -trimpath -ldflags "-s -w" \
-            -o "dist/sensitive-server-${{ runner.os }}${EXT}" \
+            -o "dist/sensitive-server${EXT}" \
             ./cmd/server
+
+      - name: Prepare release packages
+        shell: bash
+        run: |
+          OS_NAME="$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')"
+          EXT=""
+          if [ "${{ runner.os }}" = "Windows" ]; then EXT=".exe"; fi
+
+          BASE_DIR="dist/package-base"
+          OCR_DIR="dist/package-ocr"
+          rm -rf "$BASE_DIR" "$OCR_DIR"
+          mkdir -p "$BASE_DIR/internal/ocr" "$OCR_DIR"
+
+          cp "dist/sensitive-server${EXT}" "$BASE_DIR/sensitive-server${EXT}"
+          cp LICENSE README.md config.example.json "$BASE_DIR/"
+          cp -R Vocabulary "$BASE_DIR/"
+          cp -R ThirdPartyCompatibleFormats "$BASE_DIR/"
+          rm -rf "$BASE_DIR/ThirdPartyCompatibleFormats/chineseocr_lite"
+          cp internal/ocr/bridge.py "$BASE_DIR/internal/ocr/bridge.py"
+
+          cp -R "$BASE_DIR/." "$OCR_DIR/"
+          mkdir -p "$OCR_DIR/ThirdPartyCompatibleFormats/chineseocr_lite"
+          if [ -d "ThirdPartyCompatibleFormats/chineseocr_lite" ]; then
+            cp -R ThirdPartyCompatibleFormats/chineseocr_lite/. "$OCR_DIR/ThirdPartyCompatibleFormats/chineseocr_lite/"
+          fi
+
+          cat > "$OCR_DIR/install_python_deps.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          OCR_DIR="$ROOT_DIR/ThirdPartyCompatibleFormats/chineseocr_lite"
+          PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+          "$PYTHON_BIN" -m pip install --upgrade pip
+          if [ -f "$OCR_DIR/requirements.txt" ]; then
+            "$PYTHON_BIN" -m pip install -r "$OCR_DIR/requirements.txt"
+          else
+            "$PYTHON_BIN" -m pip install numpy pillow
+          fi
+          EOF
+          chmod +x "$OCR_DIR/install_python_deps.sh"
+
+          cat > "$OCR_DIR/install_python_deps.ps1" <<'EOF'
+          $ErrorActionPreference = "Stop"
+          $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+          $OcrDir = Join-Path $RootDir "ThirdPartyCompatibleFormats/chineseocr_lite"
+          $Python = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
+
+          & $Python -m pip install --upgrade pip
+          $Requirements = Join-Path $OcrDir "requirements.txt"
+          if (Test-Path $Requirements) {
+            & $Python -m pip install -r $Requirements
+          } else {
+            & $Python -m pip install numpy pillow
+          }
+          EOF
+
+          python - <<PY
+          import pathlib
+          import zipfile
+
+          os_name = "${OS_NAME}"
+          dist = pathlib.Path("dist")
+          packages = {
+              f"sensitive-server-{os_name}-base.zip": dist / "package-base",
+              f"sensitive-server-{os_name}-ocr.zip": dist / "package-ocr",
+          }
+          for archive_name, src_dir in packages.items():
+              archive_path = dist / archive_name
+              if archive_path.exists():
+                  archive_path.unlink()
+              with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                  for path in src_dir.rglob("*"):
+                      if path.is_file():
+                          zf.write(path, path.relative_to(src_dir))
+          PY
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sensitive-server-${{ runner.os }}
-          path: dist/*
+          name: sensitive-server-${{ runner.os }}-packages
+          path: dist/*.zip
 
   release:
     needs: build
