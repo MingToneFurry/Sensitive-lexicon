@@ -68,6 +68,11 @@ jobs:
           OCR_DIR="$ROOT_DIR/ThirdPartyCompatibleFormats/chineseocr_lite"
           PYTHON_BIN="${PYTHON_BIN:-python3}"
 
+          if [ ! -d "$OCR_DIR" ]; then
+            echo "OCR directory not found: $OCR_DIR"
+            exit 1
+          fi
+
           "$PYTHON_BIN" -m pip install --upgrade pip
           if [ -f "$OCR_DIR/requirements.txt" ]; then
             "$PYTHON_BIN" -m pip install -r "$OCR_DIR/requirements.txt"
@@ -79,9 +84,13 @@ jobs:
 
           cat > "$OCR_DIR/install_python_deps.ps1" <<'EOF'
           $ErrorActionPreference = "Stop"
-          $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+          $RootDir = $PSScriptRoot
           $OcrDir = Join-Path $RootDir "ThirdPartyCompatibleFormats/chineseocr_lite"
           $Python = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
+
+          if (-not (Test-Path $OcrDir)) {
+            throw "OCR directory not found: $OcrDir"
+          }
 
           & $Python -m pip install --upgrade pip
           $Requirements = Join-Path $OcrDir "requirements.txt"
@@ -94,6 +103,7 @@ jobs:
 
           python - <<PY
           import pathlib
+          import shutil
           import zipfile
 
           os_name = "${OS_NAME}"
@@ -109,7 +119,11 @@ jobs:
               with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
                   for path in src_dir.rglob("*"):
                       if path.is_file():
-                          zf.write(path, path.relative_to(src_dir))
+                          arcname = path.relative_to(src_dir)
+                          info = zipfile.ZipInfo.from_file(path, arcname)
+                          info.compress_type = zipfile.ZIP_DEFLATED
+                          with path.open("rb") as src, zf.open(info, "w") as dst:
+                              shutil.copyfileobj(src, dst)
           PY
 
       - name: Upload artifacts
