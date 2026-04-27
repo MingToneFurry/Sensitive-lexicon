@@ -19,17 +19,62 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-      - name: Sync upstream
+      - name: Sync upstream (Konsheng lexicon)
         env:
           UPSTREAM_REPO: https://github.com/Konsheng/Sensitive-lexicon.git
         run: |
           git remote add upstream "$UPSTREAM_REPO" || true
           git fetch upstream
           git merge --no-edit upstream/main || true
+      - name: Sync houbb/sensitive-word-data lexicon
+        run: |
+          # Sparse-checkout only the resources directory from houbb/sensitive-word-data.
+          HOUBB_DIR="$(mktemp -d)"
+          git clone --depth=1 --filter=blob:none --sparse \
+            https://github.com/houbb/sensitive-word-data.git "$HOUBB_DIR" || true
+          if [ -d "$HOUBB_DIR" ]; then
+            (cd "$HOUBB_DIR" && git sparse-checkout set src/main/resources) || true
+          fi
+          RESOURCES="$HOUBB_DIR/src/main/resources"
+          if [ -d "$RESOURCES" ]; then
+            echo "Found houbb resources directory"
+            ls "$RESOURCES"
+          else
+            echo "houbb resources directory not found — skipping"
+            exit 0
+          fi
+
+          # Extract words from all .txt files in the resources directory.
+          # The houbb format is one word per line (same as our Vocabulary format),
+          # but files may start with comments (#) or contain blank lines.
+          # We collect all words into a single deduplicated output file.
+          MERGED_FILE="Vocabulary/houbb-sensitive-word.txt"
+          TMP_MERGED="$(mktemp)"
+
+          # Include existing content if the file already exists.
+          if [ -f "$MERGED_FILE" ]; then
+            cat "$MERGED_FILE" >> "$TMP_MERGED"
+          fi
+
+          # Append words from every .txt file found in the houbb resources dir.
+          find "$RESOURCES" -name "*.txt" | while read -r f; do
+            grep -Ev '^[[:space:]]*#' "$f" | grep -Ev '^[[:space:]]*$' >> "$TMP_MERGED" || true
+          done
+
+          # Deduplicate, sort, and write back.
+          sort -u "$TMP_MERGED" | grep -v '^\s*$' > "$MERGED_FILE"
+          echo "houbb sync: $(wc -l < "$MERGED_FILE") unique words written to $MERGED_FILE"
+          rm -f "$TMP_MERGED"
+          rm -rf "$HOUBB_DIR"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - name: Build latest server
         run: go build -trimpath -o sensitive-server ./cmd/server
       - name: Commit synced result
         run: |
+          rm -f sensitive-server
           git add .
-          git diff --cached --quiet || git commit -m "chore: daily upstream sync and rebuild"
+          git diff --cached --quiet || git commit -m "chore: daily upstream sync (Konsheng + houbb) and rebuild"
           git push
+
