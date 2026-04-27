@@ -73,6 +73,7 @@ const scoreRoundScale = 10000.0
 
 func New(cfg config.Config) (*Server, error) {
 	eng := lexicon.NewEngine(cfg.ReplaceSymbol, cfg.EnableBoundary)
+	eng.SetSkipNoiseChars(cfg.SkipNoiseChars)
 	count, err := eng.LoadDir(cfg.LexiconDir)
 	if err != nil {
 		return nil, fmt.Errorf("load lexicon: %w", err)
@@ -90,6 +91,10 @@ func New(cfg config.Config) (*Server, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init ocr: %w", err)
+	}
+	workers := cfg.AsyncWorkers
+	if workers <= 0 {
+		workers = 4
 	}
 	s := &Server{
 		cfg:     cfg,
@@ -109,7 +114,7 @@ func New(cfg config.Config) (*Server, error) {
 	mux.HandleFunc("/detect/async/result", s.detectAsyncResult)
 	mux.HandleFunc("/sanitize-stream", s.sanitizeStream)
 	s.httpSrv = &http.Server{Addr: cfg.ListenAddr, Handler: s.middleware(mux), ReadHeaderTimeout: 3 * time.Second}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < workers; i++ {
 		go s.worker()
 	}
 	return s, nil
@@ -133,7 +138,13 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	// HEAD is required for liveness probes; respond with headers only.
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	jsonResponse(w, map[string]any{"status": "ok", "words": s.wordSize.Load(), "ocr_enabled": s.ocr.Enabled()})
 }
 
@@ -143,12 +154,18 @@ func (s *Server) contains(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) detect(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-	defer r.Body.Close()
 	var req detectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
+	if r.Method == http.MethodGet {
+		req.Text = r.URL.Query().Get("text")
+		req.ReplaceSymbol = r.URL.Query().Get("replace_symbol")
+		req.BlockThreshold = parseThreshold(r.URL.Query().Get("block_threshold"))
+	} else {
+		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
 	}
 	jsonResponse(w, s.analyzeText(req.Text, req.ReplaceSymbol, req.BlockThreshold))
 }
@@ -311,12 +328,18 @@ func (s *Server) reload(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) detectAsync(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
-	defer r.Body.Close()
 	var req detectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
+	if r.Method == http.MethodGet {
+		req.Text = r.URL.Query().Get("text")
+		req.ReplaceSymbol = r.URL.Query().Get("replace_symbol")
+		req.BlockThreshold = parseThreshold(r.URL.Query().Get("block_threshold"))
+	} else {
+		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
 	}
 	id := fmt.Sprintf("job-%d", s.idSeq.Add(1))
 	select {
@@ -347,9 +370,17 @@ func (s *Server) worker() {
 }
 
 func (s *Server) sanitizeStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// GET: treat the ?text= query parameter as a single line to sanitize.
+	if r.Method == http.MethodGet {
+		text := r.URL.Query().Get("text")
+		if _, err := io.WriteString(w, s.engine.Replace(text)+"\n"); err != nil {
+			log.Printf("stream write failed: %v", err)
+		}
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
 	defer r.Body.Close()
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	reader := bufio.NewReader(r.Body)
 	for {
 		line, err := reader.ReadString('\n')

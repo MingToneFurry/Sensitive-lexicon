@@ -18,9 +18,13 @@ type Config struct {
 	BaseRPS          int
 	MaxBodyBytes     int64
 	AsyncQueueLength int
+	AsyncWorkers     int
 	// BlockScoreThreshold is the default sentence blocking threshold in [0,1],
 	// where score=matchedRunes/totalRunes and blocked=true when score >= threshold.
 	BlockScoreThreshold float64
+	// SkipNoiseChars enables transparent skipping of common evasion characters
+	// (spaces, common punctuation) during matching so that "色 情" matches "色情".
+	SkipNoiseChars bool
 
 	EnableOCR       bool
 	OCRUseGPU       bool
@@ -44,7 +48,9 @@ type fileConfig struct {
 	BaseRPS             *int      `json:"base_rps"`
 	MaxBodyBytes        *int64    `json:"max_body_bytes"`
 	AsyncQueueLength    *int      `json:"async_queue_length"`
+	AsyncWorkers        *int      `json:"async_workers"`
 	BlockScoreThreshold *float64  `json:"block_score_threshold"`
+	SkipNoiseChars      *bool     `json:"skip_noise_chars"`
 	OCR                 *ocrBlock `json:"ocr"`
 }
 
@@ -70,7 +76,9 @@ func defaults() Config {
 		BaseRPS:             600,
 		MaxBodyBytes:        1 << 20,
 		AsyncQueueLength:    128,
+		AsyncWorkers:        4,
 		BlockScoreThreshold: 0.2,
+		SkipNoiseChars:      true,
 		OCRAutoDownload:     true,
 		OCRRepoURL:          "https://github.com/DayBreak-u/chineseocr_lite.git",
 		OCRModelDir:         "./ThirdPartyCompatibleFormats/chineseocr_lite",
@@ -140,8 +148,14 @@ func loadFile(path string, cfg *Config) error {
 	if fc.AsyncQueueLength != nil {
 		cfg.AsyncQueueLength = *fc.AsyncQueueLength
 	}
+	if fc.AsyncWorkers != nil {
+		cfg.AsyncWorkers = *fc.AsyncWorkers
+	}
 	if fc.BlockScoreThreshold != nil {
 		cfg.BlockScoreThreshold = *fc.BlockScoreThreshold
+	}
+	if fc.SkipNoiseChars != nil {
+		cfg.SkipNoiseChars = *fc.SkipNoiseChars
 	}
 	if o := fc.OCR; o != nil {
 		if o.Enable != nil {
@@ -211,9 +225,19 @@ func applyEnv(cfg *Config) {
 			cfg.AsyncQueueLength = n
 		}
 	}
+	if v := os.Getenv("ASYNC_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.AsyncWorkers = n
+		}
+	}
 	if v := os.Getenv("BLOCK_SCORE_THRESHOLD"); v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.BlockScoreThreshold = n
+		}
+	}
+	if v := os.Getenv("SKIP_NOISE_CHARS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.SkipNoiseChars = b
 		}
 	}
 	if v := os.Getenv("ENABLE_OCR"); v != "" {

@@ -26,10 +26,11 @@ type Match struct {
 }
 
 type Engine struct {
-	trie       atomic.Pointer[Trie]
-	category   atomic.Pointer[map[string]*Trie]
-	replace    atomic.Pointer[string]
-	enBoundary atomic.Bool
+	trie           atomic.Pointer[Trie]
+	category       atomic.Pointer[map[string]*Trie]
+	replace        atomic.Pointer[string]
+	enBoundary     atomic.Bool
+	skipNoiseChars atomic.Bool
 }
 
 func NewEngine(replace string, enableBoundary bool) *Engine {
@@ -49,6 +50,116 @@ func (e *Engine) SetReplaceSymbol(v string) {
 
 func (e *Engine) SetBoundary(v bool) {
 	e.enBoundary.Store(v)
+}
+
+// SetSkipNoiseChars controls whether noise/evasion characters (spaces, common
+// punctuation) are transparently skipped during matching.  When true, inputs
+// like "色 情" or "色*情" are treated identically to "色情".
+func (e *Engine) SetSkipNoiseChars(v bool) {
+	e.skipNoiseChars.Store(v)
+}
+
+// normalizeRune converts a single rune to its canonical form:
+//   - Full-width ASCII letters/digits (U+FF01–U+FF5E) → half-width equivalents
+//   - ASCII letters are lowercased
+//   - All other runes pass through unchanged
+func normalizeRune(r rune) rune {
+	// Full-width ASCII range: U+FF01 (！) – U+FF5E (～)
+	if r >= 0xFF01 && r <= 0xFF5E {
+		r = r - 0xFEE0 // shift to ASCII range
+	}
+	return unicode.ToLower(r)
+}
+
+// isInvisibleRune reports whether r is a zero-width or invisible Unicode
+// character that should always be removed regardless of skipNoiseChars.
+func isInvisibleRune(r rune) bool {
+	switch r {
+	case 0x200B, // zero-width space
+		0x200C, // zero-width non-joiner
+		0x200D, // zero-width joiner
+		0x200E, // left-to-right mark
+		0x200F, // right-to-left mark
+		0xFEFF, // BOM / zero-width no-break space
+		0x00AD, // soft hyphen
+		0x034F, // combining grapheme joiner
+		0x2060, // word joiner
+		0x2061, // function application
+		0x2062, // invisible times
+		0x2063, // invisible separator
+		0x2064: // invisible plus
+		return true
+	}
+	return false
+}
+
+// isNoiseRune reports whether r is a "noise" character that evasion attempts
+// commonly insert between sensitive characters.  Only used when skipNoiseChars
+// is enabled.
+func isNoiseRune(r rune) bool {
+	// Ideographic/regular spaces
+	if r == ' ' || r == '\t' || r == 0x3000 {
+		return true
+	}
+	// Common evasion punctuation (ASCII and CJK)
+	switch r {
+	case '*', '-', '_', '.', '~', '^', '|', '/', '\\', '+', '=',
+		',', ';', ':', '!', '?', '#', '@', '$', '%', '&',
+		'(', ')', '[', ']', '{', '}', '<', '>',
+		0x2019, // right single quotation mark
+		0xFF0C, // full-width comma
+		0x3001, // ideographic comma
+		0x3002, // ideographic period
+		0xFF01, // full-width !
+		0xFF1F, // full-width ?
+		0xFF0E, // full-width .
+		0xFF0D, // full-width hyphen
+		0xFF3F: // full-width _
+		return true
+	}
+	return false
+}
+
+// normalizedSeq holds a normalized rune sequence together with a mapping from
+// each normalized position back to the corresponding position in the original
+// []rune slice.
+type normalizedSeq struct {
+	runes   []rune
+	origIdx []int
+}
+
+// buildNormSeq lowercases and full-width-normalizes every rune in orig,
+// removes invisible characters, and – if skipNoise is true – also removes
+// common noise/evasion characters.  origIdx[i] gives the position in orig of
+// the i-th rune in the returned normalized sequence.
+func buildNormSeq(orig []rune, skipNoise bool) normalizedSeq {
+	nr := make([]rune, 0, len(orig))
+	oi := make([]int, 0, len(orig))
+	for i, r := range orig {
+		r = normalizeRune(r)
+		if isInvisibleRune(r) {
+			continue
+		}
+		if skipNoise && isNoiseRune(r) {
+			continue
+		}
+		nr = append(nr, r)
+		oi = append(oi, i)
+	}
+	return normalizedSeq{runes: nr, origIdx: oi}
+}
+
+// origMatch maps a match in the normalized rune space back to a match covering
+// the corresponding span of the original rune slice.
+func origMatch(m Match, oi []int) Match {
+	if len(oi) == 0 || m.Start >= len(oi) {
+		return m
+	}
+	end := m.End - 1
+	if end >= len(oi) {
+		end = len(oi) - 1
+	}
+	return Match{Start: oi[m.Start], End: oi[end] + 1}
 }
 
 func (e *Engine) LoadDir(dir string) (int, error) {
@@ -97,13 +208,19 @@ func loadWords(r io.Reader, tries ...*Trie) (int, error) {
 	s := bufio.NewScanner(r)
 	c := 0
 	for s.Scan() {
-		w := strings.TrimSpace(strings.ToLower(s.Text()))
-		if w == "" || strings.HasPrefix(w, "#") {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		word := []rune(w)
+		// Normalize and lower-case each word before inserting into the trie so
+		// that it matches the normalized form of the input text.
+		origRunes := []rune(strings.ToLower(line))
+		ns := buildNormSeq(origRunes, false) // only strip invisible chars; keep noise
+		if len(ns.runes) == 0 {
+			continue
+		}
 		for _, trie := range tries {
-			trie.Insert(word)
+			trie.Insert(ns.runes)
 		}
 		c++
 	}
@@ -122,9 +239,24 @@ func (t *Trie) Insert(word []rune) {
 }
 
 func (e *Engine) Find(text string) []Match {
-	runes := []rune(strings.ToLower(text))
+	orig := []rune(text)
+	ns := buildNormSeq(orig, e.skipNoiseChars.Load())
 	trie := e.trie.Load()
-	return findWithTrie(runes, trie, e.enBoundary.Load())
+	normMatches := findWithTrie(ns.runes, trie, e.enBoundary.Load())
+	return mapNormMatches(normMatches, ns.origIdx)
+}
+
+// mapNormMatches converts matches expressed in normalized-rune positions back
+// to positions in the original rune slice, then merges any overlapping spans.
+func mapNormMatches(normMatches []Match, origIdx []int) []Match {
+	if len(origIdx) == 0 {
+		return nil
+	}
+	out := make([]Match, 0, len(normMatches))
+	for _, m := range normMatches {
+		out = append(out, origMatch(m, origIdx))
+	}
+	return mergeMatches(out)
 }
 
 func findWithTrie(runes []rune, trie *Trie, enableBoundary bool) []Match {
@@ -152,7 +284,8 @@ func findWithTrie(runes []rune, trie *Trie, enableBoundary bool) []Match {
 }
 
 func (e *Engine) CategoryScores(text string) map[string]float64 {
-	runes := []rune(strings.ToLower(text))
+	orig := []rune(text)
+	ns := buildNormSeq(orig, e.skipNoiseChars.Load())
 	totalRunes := utf8.RuneCountInString(text)
 	if totalRunes == 0 {
 		return map[string]float64{}
@@ -163,7 +296,8 @@ func (e *Engine) CategoryScores(text string) map[string]float64 {
 	}
 	scores := make(map[string]float64)
 	for categoryName, trie := range *categoryTrie {
-		matches := findWithTrie(runes, trie, e.enBoundary.Load())
+		normMatches := findWithTrie(ns.runes, trie, e.enBoundary.Load())
+		matches := mapNormMatches(normMatches, ns.origIdx)
 		matchedRunes := 0
 		for _, m := range matches {
 			if m.End > m.Start {
