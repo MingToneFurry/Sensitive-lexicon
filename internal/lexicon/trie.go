@@ -150,16 +150,18 @@ func buildNormSeq(orig []rune, skipNoise bool) normalizedSeq {
 }
 
 // origMatch maps a match in the normalized rune space back to a match covering
-// the corresponding span of the original rune slice.
-func origMatch(m Match, oi []int) Match {
+// the corresponding span of the original rune slice.  Returns (match, true) if
+// the mapping is valid, or (Match{}, false) if the normalized indices are out of
+// bounds (should not happen in normal operation).
+func origMatch(m Match, oi []int) (Match, bool) {
 	if len(oi) == 0 || m.Start >= len(oi) {
-		return m
+		return Match{}, false
 	}
 	end := m.End - 1
 	if end >= len(oi) {
 		end = len(oi) - 1
 	}
-	return Match{Start: oi[m.Start], End: oi[end] + 1}
+	return Match{Start: oi[m.Start], End: oi[end] + 1}, true
 }
 
 func (e *Engine) LoadDir(dir string) (int, error) {
@@ -254,7 +256,9 @@ func mapNormMatches(normMatches []Match, origIdx []int) []Match {
 	}
 	out := make([]Match, 0, len(normMatches))
 	for _, m := range normMatches {
-		out = append(out, origMatch(m, origIdx))
+		if om, ok := origMatch(m, origIdx); ok {
+			out = append(out, om)
+		}
 	}
 	return mergeMatches(out)
 }

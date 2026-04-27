@@ -58,7 +58,7 @@ jobs:
 
           # Append words from every .txt file found in the houbb resources dir.
           find "$RESOURCES" -name "*.txt" | while read -r f; do
-            grep -v '^\s*#' "$f" | grep -v '^\s*$' >> "$TMP_MERGED" || true
+            grep -Ev '^[[:space:]]*#' "$f" | grep -Ev '^[[:space:]]*$' >> "$TMP_MERGED" || true
           done
 
           # Deduplicate, sort, and write back.
