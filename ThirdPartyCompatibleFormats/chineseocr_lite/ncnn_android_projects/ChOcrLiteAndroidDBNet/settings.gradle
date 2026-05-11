@@ -1,3 +1,0 @@
-rootProject.name = "ChOcrLiteAndroidDBNet"
-include ':app'
-include ':OcrLibrary'
