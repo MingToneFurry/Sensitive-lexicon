@@ -230,3 +230,81 @@ func TestDetectAsyncResultIncludesCategoryScores(t *testing.T) {
 	}
 	t.Fatal("timed out waiting for async result")
 }
+
+func TestHealthHead(t *testing.T) {
+	s := newTestServer(t, "")
+	req := httptest.NewRequest(http.MethodHead, "/health", nil)
+	res := httptest.NewRecorder()
+	s.health(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected empty body for HEAD, got %q", res.Body.String())
+	}
+}
+
+func TestDetectGET(t *testing.T) {
+	s := newTestServer(t, "")
+	h := s.middleware(http.HandlerFunc(s.detect))
+
+	req := httptest.NewRequest(http.MethodGet, "/detect?text=这是坏词", nil)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), `"contains":true`) {
+		t.Fatalf("unexpected body: %s", res.Body.String())
+	}
+}
+
+func TestDetectAsyncGET(t *testing.T) {
+	s := newTestServer(t, "")
+	asyncHandler := s.middleware(http.HandlerFunc(s.detectAsync))
+	resultHandler := s.middleware(http.HandlerFunc(s.detectAsyncResult))
+
+	req := httptest.NewRequest(http.MethodGet, "/detect/async?text=这是坏词", nil)
+	res := httptest.NewRecorder()
+	asyncHandler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var enqResp struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &enqResp); err != nil || enqResp.JobID == "" {
+		t.Fatalf("expected job_id, got %s", res.Body.String())
+	}
+
+	for i := 0; i < 50; i++ {
+		rq := httptest.NewRequest(http.MethodGet, "/detect/async/result?job_id="+enqResp.JobID, nil)
+		rr := httptest.NewRecorder()
+		resultHandler.ServeHTTP(rr, rq)
+		if rr.Code == http.StatusOK {
+			if !strings.Contains(rr.Body.String(), `"contains":true`) {
+				t.Fatalf("unexpected result body: %s", rr.Body.String())
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for async result")
+}
+
+func TestSanitizeStreamGET(t *testing.T) {
+	s := newTestServer(t, "")
+	h := s.middleware(http.HandlerFunc(s.sanitizeStream))
+
+	req := httptest.NewRequest(http.MethodGet, "/sanitize-stream?text=这是坏词", nil)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+	body := res.Body.String()
+	if strings.Contains(body, "坏词") {
+		t.Fatalf("expected sensitive word to be replaced, got: %s", body)
+	}
+}

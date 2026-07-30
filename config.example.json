@@ -8,7 +8,9 @@
   "base_rps": 600,
   "max_body_bytes": 1048576,
   "async_queue_length": 128,
+  "async_workers": 4,
   "block_score_threshold": 0.2,
+  "skip_noise_chars": true,
   "ocr": {
     "enable": false,
     "use_gpu": false,
